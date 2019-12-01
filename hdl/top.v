@@ -18,95 +18,40 @@
  */
 
 module top (
-    input CLK,
-
-    // hardware UART
-    output SER_TX,
-    input SER_RX,
-
-`ifdef flash_write
-    inout SPI_IO1,
-    inout SPI_SS,
-    inout SPI_IO0,
-    inout SPI_SCK,
-`endif
-
-`ifdef pdm_audio
-    // Audio out pin
-		output AUDIO_RIGHT,
-    output AUDIO_LEFT,
-`endif
-
-`ifdef i2c
-    // I2C pins
-    inout I2C_SDA,
-    inout I2C_SCL,
-`endif
-
-`ifdef oled
-    inout OLED_SPI_SCL,
-    inout OLED_SPI_SDA,
-    inout OLED_SPI_RES,
-    inout OLED_SPI_DC,
-    inout OLED_SPI_CS,
-`endif
-
-`ifdef sdcard
-    inout SD_MISO,
-    inout SD_MOSI,
-    inout SD_SCK,
-    inout SD_CS,
-`endif
-
-`ifdef ili9341_direct
-        output lcd_D0,
-	output lcd_D1,
-	output lcd_D2,
-	output lcd_D3,
-	output lcd_D4,
-	output lcd_D5,
-	output lcd_D6,
-	output lcd_D7,
-	output lcd_nreset,
-        output lcd_cmd_data,
-        output lcd_write_edge,
-        output lcd_backlight,
-`endif
-
-`ifdef ili9341
-        output lcd_D0,
-	output lcd_D1,
-	output lcd_D2,
-	output lcd_D3,
-	output lcd_D4,
-	output lcd_D5,
-	output lcd_D6,
-	output lcd_D7,
-	output lcd_nreset,
-        output lcd_cmd_data,
-        output lcd_write_edge,
-        output lcd_backlight,
-`elsif vga
-    output VGA_VSYNC,
-    output VGA_HSYNC,
-    output VGA_R,
-    output VGA_G,
-    output VGA_B,
-`endif
-
-`ifdef gpio
-    // GPIO buttons
-    inout  [7:0] BUTTONS,
-
-    // onboard LED
-    output LED,
-`endif
+    input clk_16mhz,
 
     // onboard USB interface
-    output USBPU
+    output pin_pu,
+    output pin_usbp,
+    output pin_usbn,
+
+    // hardware UART
+    output uart_out,
+    input uart_in,
+
+    // PWM
+    output pinPwmIzqF,
+    output pinPwmIzqB,
+    output pinPwmDerF,
+    output pinPwmDerB,
+
+    output pin_7,
+    output pin_8,
+
+    // encoders
+    input pinEncoderIF,
+    input pinEncoderIB,
+    input pinEncoderDF,
+    
+    input pinEncoderDB,
+
 );
-    // Disable USB
-    assign USBPU = 1'b0;
+    assign pin_pu = 1'b1;
+    assign pin_usbp = 1'b0;
+    assign pin_usbn = 1'b0;
+
+    wire clk = clk_16mhz;
+  
 
     ///////////////////////////////////
     // Power-on Reset
@@ -114,243 +59,199 @@ module top (
     reg [5:0] reset_cnt = 0;
     wire resetn = &reset_cnt;
 
-    always @(posedge CLK) begin
+    always @(posedge clk) begin
         reset_cnt <= reset_cnt + !resetn;
     end
-
+    
     ///////////////////////////////////
     // Peripheral Bus
     ///////////////////////////////////
     wire        iomem_valid;
-    wire        iomem_ready;
-
+    reg         iomem_ready;
     wire [3:0]  iomem_wstrb;
     wire [31:0] iomem_addr;
     wire [31:0] iomem_wdata;
-    wire [31:0] iomem_rdata;
+    reg [31:0] clock_out;
+    reg  [31:0] iomem_rdata;
 
-    // enable signals for each of the peripherals
-    wire gpio_en   = (iomem_addr[31:24] == 8'h03); /* GPIO mapped to 0x03xx_xxxx */
-    wire audio_en  = (iomem_addr[31:24] == 8'h04); /* Audio device mapped to 0x04xx_xxxx */
-    wire video_en  = (iomem_addr[31:24] == 8'h05); /* Video device mapped to 0x05xx_xxxx */
-    wire sdcard_en  = (iomem_addr[31:24] == 8'h06); /* SPI SD card mapped to 0x06xx_xxxx */
-    wire i2c_en    = (iomem_addr[31:24] == 8'h07); /* I2C device mapped to 0x07xx_xxxx */
-    wire flash_en    = (iomem_addr[31:24] == 8'h08); /* flash memory SPI mapped to 0x08xx_xxxx */
+    reg [31:0] clockO=0;
+    reg [31:0] gpio;
+    reg [31:0] leds;
 
-`ifdef warm_boot
-  wire boot_en    = (iomem_addr[31:24] == 8'h09); /* warm boot */
-  
-  SB_WARMBOOT warmboot_inst (
-    .S1(1'b0),
-    .S0(1'b1),
-    .BOOT(boot_en)
-  );
-`endif
+    reg pwm_out;
+    reg [31:0] pwm_connectorIF=0;
+    reg [31:0] pwm_connectorIB=0;
+    reg [31:0] pwm_connectorDF=0;
+    reg [31:0] pwm_connectorDB=0;
 
-`ifdef pdm_audio
-    wire audio_data;
-  	assign AUDIO_LEFT = audio_data;
-  	assign AUDIO_RIGHT = audio_data;
-  	audio audio_peripheral(
-  		.clk(CLK),
-  		.resetn(resetn),
-  		.audio_out(audio_data),
-  		.iomem_valid(iomem_valid && audio_en),
-  		.iomem_wstrb(iomem_wstrb),
-  		.iomem_addr(iomem_addr),
-  		.iomem_wdata(iomem_wdata)
-  );
-`endif
+    reg[31:0] pinTest=0;
+    assign pin_8=pinTest[0];
+    assign pin_7=clk;
 
-  wire oled_iomem_ready;
+    reg writeEncoderI=0;
+    reg writeEncoderD=0;
+    wire [31:0] encoderValueI;
+    wire [31:0] encoderValueD;
+    reg [31:0] encoderDataI=0;
+    reg [31:0] encoderDataD=0;
+    
 
-`ifdef oled
-  video_oled oled (
-    .clk(CLK),
-    .resetn(resetn),
-    .iomem_valid(iomem_valid && video_en),
-    .iomem_wstrb(iomem_wstrb),
-    .iomem_addr(iomem_addr),
-    .iomem_wdata(iomem_wdata),
-    .iomem_ready(oled_iomem_ready),
-    .OLED_SPI_SDA(OLED_SPI_SDA),
-    .OLED_SPI_SCL(OLED_SPI_SCL),
-    .OLED_SPI_CS(OLED_SPI_CS),
-    .OLED_SPI_DC(OLED_SPI_DC),
-    .OLED_SPI_RES(OLED_SPI_RES)
-  );
-`endif
+    //assign user_led = gpio[0];
+    //assign user_led = !pwm_out;
+    //assign pin_20 = pwm_out;
 
-  wire flash_iomem_ready;
+    always @(posedge clk) begin
+        if (!resetn) begin
+            gpio <= 0;
+        end else begin
+            iomem_ready <= 0;
+            writeEncoderI <=0; 
+            writeEncoderD <=0; 
 
-`ifdef flash_write
-  wire [31:0] flash_iomem_rdata;
-  
-  flash_write flash (
-    .clk(CLK),
-    .resetn(resetn),
-    .iomem_valid(iomem_valid && flash_en),
-    .iomem_wstrb(iomem_wstrb),
-    .iomem_addr(iomem_addr),
-    .iomem_wdata(iomem_wdata),
-    .iomem_rdata(flash_iomem_rdata),
-    .iomem_ready(flash_iomem_ready),
-    .SPI_MISO(SPI_IO1),
-    .SPI_SCK(SPI_SCK),
-    .SPI_CS(SPI_SS),
-    .SPI_MOSI(SPI_IO0)
-  );
-`endif
+            ///////////////////////////
+            // GPIO Peripheral
+            ///////////////////////////
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030002) begin
+                iomem_ready <= 1;
+                iomem_rdata <= clock_out;
+                if (iomem_wstrb[0]) clockO[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) clockO[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) clockO[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) clockO[31:24] <= iomem_wdata[31:24];
+            end
 
-  wire ili_direct_iomem_ready;
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030003) begin
+                iomem_ready <= 1;
+                iomem_rdata <= encoderValueI;
+                writeEncoderI<= iomem_wstrb!=0;
+                if (iomem_wstrb[0]) encoderDataI[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) encoderDataI[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) encoderDataI[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) encoderDataI[31:24] <= iomem_wdata[31:24];
+            end
 
-`ifdef ili9341_direct
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030004) begin
+                iomem_ready <= 1;
+                iomem_rdata <= encoderValueD;
+                writeEncoderD<= iomem_wstrb!=0;
+                if (iomem_wstrb[0]) encoderDataD[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) encoderDataD[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) encoderDataD[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) encoderDataD[31:24] <= iomem_wdata[31:24];
+            end
 
-      assign lcd_backlight = 1;
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030005) begin
+                iomem_ready <= 1;
+                if (iomem_wstrb[0]) pwm_connectorIF[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) pwm_connectorIF[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) pwm_connectorIF[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) pwm_connectorIF[31:24] <= iomem_wdata[31:24];
+            end
 
-      ili9341_direct lcd_peripheral(
-                .clk(CLK),
-                .resetn(resetn),
-                .iomem_valid(iomem_valid && video_en),
-                .iomem_wstrb(iomem_wstrb),
-                .iomem_addr(iomem_addr),
-                .iomem_wdata(iomem_wdata),
-                .iomem_ready(ili_direct_iomem_ready),
-                .nreset(lcd_nreset),
-                .cmd_data(lcd_cmd_data),
-                .write_edge(lcd_write_edge),
-                .dout({lcd_D7, lcd_D6, lcd_D5, lcd_D4,
-                       lcd_D3, lcd_D2, lcd_D1, lcd_D0}));
-`endif
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030006) begin
+                iomem_ready <= 1;
+                if (iomem_wstrb[0]) pwm_connectorIB[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) pwm_connectorIB[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) pwm_connectorIB[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) pwm_connectorIB[31:24] <= iomem_wdata[31:24];
+            end
 
-`ifdef sdcard
-  wire [31:0] sdcard_iomem_rdata;
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030007) begin
+                iomem_ready <= 1;
+                if (iomem_wstrb[0]) pwm_connectorDF[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) pwm_connectorDF[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) pwm_connectorDF[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) pwm_connectorDF[31:24] <= iomem_wdata[31:24];
+            end
 
-  sdcard sd (
-    .clk(CLK),
-    .resetn(resetn),
-    .iomem_valid(iomem_valid && sdcard_en),
-    .iomem_wstrb(iomem_wstrb),
-    .iomem_addr(iomem_addr),
-    .iomem_wdata(iomem_wdata),
-    .iomem_rdata(sdcard_iomem_rdata),
-    .iomem_ready(sdcard_iomem_ready),
-    .SD_MOSI(SD_MOSI),
-    .SD_MISO(SD_MISO),
-    .SD_SCK(SD_SCK),
-    .SD_CS(SD_CS)
-  );
-`endif
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030008) begin
+                iomem_ready <= 1;
+                if (iomem_wstrb[0]) pwm_connectorDB[ 7: 0] <= iomem_wdata[ 7: 0];
+                if (iomem_wstrb[1]) pwm_connectorDB[15: 8] <= iomem_wdata[15: 8];
+                if (iomem_wstrb[2]) pwm_connectorDB[23:16] <= iomem_wdata[23:16];
+                if (iomem_wstrb[3]) pwm_connectorDB[31:24] <= iomem_wdata[31:24];
+            end
 
-  wire sdcard_iomem_ready;
+            if (iomem_valid && !iomem_ready && iomem_addr[31:8] == 24'h030009) begin
+                iomem_ready <= 1;
+                pinTest[0]=1;
+            end
 
-`ifdef ili9341
+            
+            ///////////////////////////
+            // Template Peripheral
+            ///////////////////////////
+            if (iomem_valid && !iomem_ready && iomem_addr[31:24] == 8'h04) begin
+                iomem_ready <= 1;
+                iomem_rdata <= 32'h0;
+            end
+        end
+    end
 
-      assign lcd_backlight = 1;
+    ///////////////////////////////////
+    // Custom Modules
+    ///////////////////////////////////
 
-      video_vga vga_video_peripheral(
-      		.clk(CLK),
-      		.resetn(resetn),
-      		.iomem_valid(iomem_valid && video_en),
-      		.iomem_wstrb(iomem_wstrb),
-      		.iomem_addr(iomem_addr),
-      		.iomem_wdata(iomem_wdata),
-                .nreset(lcd_nreset),
-                .cmd_data(lcd_cmd_data),
-		.write_edge(lcd_write_edge),
-		.dout({lcd_D7, lcd_D6, lcd_D5, lcd_D4,
-		       lcd_D3, lcd_D2, lcd_D1, lcd_D0})
-      );
-`elsif vga
-      video_vga vga_video_peripheral(
-      		.clk(CLK),
-      		.resetn(resetn),
-      		.iomem_valid(iomem_valid && video_en),
-      		.iomem_wstrb(iomem_wstrb),
-      		.iomem_addr(iomem_addr),
-      		.iomem_wdata(iomem_wdata),
-      		.vga_hsync(VGA_HSYNC),
-      		.vga_vsync(VGA_VSYNC),
-      		.vga_r(VGA_R),
-      		.vga_g(VGA_G),
-      		.vga_b(VGA_B)
-      	);
-`endif
+    clock clock (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+		.clock_out   (clock_out)
+	);
 
-  wire [31:0] gpio_iomem_rdata;
-  wire gpio_iomem_ready;
+    pwm pwmIF (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+        .pwm_in      (pwm_connectorIF      ),
+		.pwm_out     (pinPwmIzqF     )
+	);
 
-`ifdef gpio
-  gpio gpio_peripheral(
-    .clk(CLK),
-    .resetn(resetn),
-    .iomem_ready(gpio_iomem_ready),
-    .iomem_rdata(gpio_iomem_rdata),
-    .iomem_valid(iomem_valid && gpio_en),
-    .iomem_wstrb(iomem_wstrb),
-    .iomem_addr(iomem_addr),
-    .iomem_wdata(iomem_wdata),
-    .BUTTONS(BUTTONS),
-    .led(LED)
-  );
-`else
-  assign gpio_iomem_ready = gpio_en;
-  assign gpio_iomem_rdata = 32'h0;
-`endif
+    pwm pwmIB (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+        .pwm_in      (pwm_connectorIB      ),
+		.pwm_out     (pinPwmIzqB    )
+	);
 
+    pwm pwmDF (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+        .pwm_in      (pwm_connectorDF      ),
+		.pwm_out     (pinPwmDerF     )
+	);
 
-///////////////////////////
-// Controller Peripheral
-///////////////////////////
+    pwm pwmDB (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+        .pwm_in      (pwm_connectorDB      ),
+		.pwm_out     (pinPwmDerB    )
+	);
 
-wire [31:0] i2c_iomem_rdata;
-wire i2c_iomem_ready;
+    encoder encoderL (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+        .writeEncoder      (writeEncoderI      ),
+        .encoderData      (encoderDataI      ),
+		.encoderValue     (encoderValueI     ),
+        .pinEncoderF     (pinEncoderIF     ),
+        .pinEncoderB     (pinEncoderIB     )
+	);
 
-`ifdef i2c
-  i2c i2c_peripheral(
-    .clk(CLK),
-    .resetn(resetn),
-    .iomem_ready(i2c_iomem_ready),
-    .iomem_rdata(i2c_iomem_rdata),
-    .iomem_valid(iomem_valid && i2c_en),
-    .iomem_wstrb(iomem_wstrb),
-    .iomem_addr(iomem_addr),
-    .iomem_wdata(iomem_wdata),
-    .I2C_SCL(I2C_SCL),
-    .I2C_SDA(I2C_SDA)
-  );
-`else
-  assign i2c_iomem_ready = i2c_en;     /* if i2c peripheral is "disconnected", fake always available zero bytes */
-  assign i2c_iomem_rdata = 32'h0;
-`endif
+    encoder encoderR (
+		.clk         (clk         ),
+		.resetn      (resetn      ),
+        .writeEncoder      (writeEncoderD      ),
+        .encoderData      (encoderDataD     ),
+		.encoderValue     (encoderValueD     ),
+        .pinEncoderF     (pinEncoderDF     ),
+        .pinEncoderB     (pinEncoderDB     )
+	);
 
 
-assign iomem_ready = i2c_en ? i2c_iomem_ready : gpio_en ? gpio_iomem_ready 
-`ifdef oled
-                     : video_en ? oled_iomem_ready
-`endif
-`ifdef ili9341_direct
-                     : video_en ? ili_direct_iomem_ready
-`endif
-`ifdef sdcard
-                     : sdcard_en ? sdcard_iomem_ready
-`endif
-`ifdef flash_write
-                     : flash_en ? flash_iomem_ready
-`endif
-                     : 1'b1;
+    ///////////////////////////////////
+    // PicoSOC
+    ///////////////////////////////////
 
-assign iomem_rdata =  i2c_iomem_ready ? i2c_iomem_rdata
-                    : gpio_iomem_ready ? gpio_iomem_rdata
-`ifdef sdcard
-                    : sdcard_iomem_ready ? sdcard_iomem_rdata
-`endif
-`ifdef flash_write
-                    : flash_iomem_ready ? flash_iomem_rdata
-`endif
-                    : 32'h0;
-
-picosoc #(
+  picosoc #(
 	.BARREL_SHIFTER(0),
 	.ENABLE_MULDIV(0),
 	.ENABLE_COMPRESSED(0),
@@ -363,11 +264,11 @@ picosoc #(
 	.STACKADDR(3584),   /* stack addr = byte offset; stack starts at 0x400, grows downward. Data starts at 0x400+. */
 	.ENABLE_IRQ(1)
 ) soc (
-	.clk          (CLK         ),
-	.resetn       (resetn      ),
+  .clk          (clk         ),
+  .resetn       (resetn      ),
 
-	.ser_tx       (SER_TX      ),
-	.ser_rx       (SER_RX      ),
+  .ser_tx       (uart_out       ),
+  .ser_rx       (uart_in       ),
 
 	.irq_5        (1'b0),
 	.irq_6        (1'b0        ),
